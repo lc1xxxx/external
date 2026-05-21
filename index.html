@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Bem-vindo</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#0a0a0f;color:#f0f0f5;font-family:'Segoe UI',sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden}
+    body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(232,255,71,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(232,255,71,0.04) 1px,transparent 1px);background-size:60px 60px;pointer-events:none}
+    .container{position:relative;text-align:center;z-index:1;padding:2rem;animation:fadeUp 0.8s cubic-bezier(.16,1,.3,1) both}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:translateY(0)}}
+    .tag{display:inline-block;font-size:0.7rem;letter-spacing:0.25em;text-transform:uppercase;color:#e8ff47;border:1px solid rgba(232,255,71,0.3);padding:0.3rem 1rem;border-radius:100px;margin-bottom:2rem}
+    h1{font-size:clamp(2.5rem,8vw,5rem);font-weight:800;line-height:0.95;letter-spacing:-0.03em;margin-bottom:1.5rem}
+    h1 span{color:#e8ff47}
+    p{font-size:1rem;color:#6b6b80;max-width:400px;margin:0 auto 2rem;line-height:1.6}
+    .badge{display:inline-flex;align-items:center;gap:0.5rem;background:#111118;border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:0.75rem 1.5rem;font-size:0.85rem;color:#6b6b80}
+    .dot{width:8px;height:8px;border-radius:50%;background:#47ffe8;box-shadow:0 0 8px #47ffe8;animation:blink 1.5s ease-in-out infinite}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="tag">Acesso registrado</div>
+    <h1>Bem-vindo<br/>ao nosso <span>portal</span></h1>
+    <p>Sua visita foi registrada com sucesso. Obrigado por acessar nossa plataforma.</p>
+    <div class="badge"><span class="dot"></span>Sistema online e monitorando</div>
+  </div>
+</body>
+</html>

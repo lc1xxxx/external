@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Admin — IP Tracker</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    :root{--bg:#0d1117;--s1:#161b22;--s2:#1c2128;--border:#21262d;--green:#3fb950;--blue:#58a6ff;--amber:#d29922;--red:#f85149;--text:#c9d1d9;--muted:#8b949e;--dim:#484f58}
+    body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospace;min-height:100vh}
+
+    /* LOGIN */
+    #loginScreen{display:flex;align-items:center;justify-content:center;min-height:100vh}
+    .login-box{background:var(--s1);border:1px solid var(--border);padding:2rem 2.5rem;min-width:320px}
+    .login-title{font-size:14px;color:var(--text);font-weight:500;margin-bottom:4px}
+    .login-sub{font-size:11px;color:var(--dim);margin-bottom:1.5rem}
+    .login-box input{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;padding:8px 10px;outline:none;margin-bottom:10px}
+    .login-box input:focus{border-color:var(--green)}
+    .login-box button{width:100%;background:transparent;border:1px solid var(--green);color:var(--green);font-family:'JetBrains Mono',monospace;font-size:12px;padding:8px;cursor:pointer;transition:background .1s}
+    .login-box button:hover{background:rgba(63,185,80,0.08)}
+    .login-err{font-size:11px;color:var(--red);margin-top:8px;display:none}
+
+    /* MAIN */
+    #mainScreen{display:none;padding:20px 24px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px}
+    .logo{font-size:14px;font-weight:500;color:#f0f6fc}.logo span{color:var(--green)}
+    .topbar-actions{display:flex;gap:6px;flex-wrap:wrap}
+    .btn{background:var(--s1);border:1px solid var(--border);color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:11px;padding:6px 12px;cursor:pointer;transition:all .1s}
+    .btn:hover{border-color:#30363d;color:var(--text)}
+    .btn.danger{border-color:rgba(248,81,73,0.3);color:var(--red)}
+    .btn.danger:hover{background:rgba(248,81,73,0.08)}
+    .btn.primary{border-color:var(--green);color:var(--green)}
+    .btn.primary:hover{background:rgba(63,185,80,0.08)}
+    .live{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:6px}
+    .dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:blink 2s ease-in-out infinite}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+    hr{border:none;border-top:1px solid var(--border);margin:14px 0}
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border:1px solid var(--border);margin-bottom:14px}
+    .stat{background:var(--bg);padding:10px 14px}
+    .stat-l{font-size:10px;color:var(--dim);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px}
+    .stat-v{font-size:18px;font-weight:500;color:#f0f6fc}
+    .stat-v.g{color:var(--green)}.stat-v.b{color:var(--blue)}.stat-v.a{color:var(--amber)}.stat-v.r{color:var(--red)}
+    .link-bar{background:var(--s1);border:1px solid var(--border);padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .link-label{font-size:10px;color:var(--dim);letter-spacing:1.5px;text-transform:uppercase;white-space:nowrap}
+    .link-url{font-size:12px;color:var(--green);flex:1;word-break:break-all}
+    table{width:100%;border-collapse:collapse}
+    .table-wrap{background:var(--s1);border:1px solid var(--border);overflow:hidden}
+    th{font-size:10px;color:var(--dim);letter-spacing:1.5px;text-transform:uppercase;padding:8px 12px;border-bottom:1px solid var(--border);text-align:left;background:var(--s2)}
+    td{padding:7px 12px;font-size:11px;border-bottom:1px solid rgba(33,38,45,0.8);vertical-align:middle}
+    tr:last-child td{border-bottom:none}
+    tr:hover td{background:rgba(255,255,255,0.01)}
+    .ip{color:var(--blue);font-weight:500}
+    .vpn-tag{display:inline-block;font-size:9px;background:rgba(248,81,73,0.12);color:var(--red);border:1px solid rgba(248,81,73,0.25);padding:1px 5px;margin-left:5px;vertical-align:middle}
+    .camp{font-size:10px;background:rgba(88,166,255,0.08);color:var(--blue);border:1px solid rgba(88,166,255,0.2);padding:1px 6px}
+    .t-dim{color:var(--dim);font-size:10px}
+    .risk-alto{color:var(--red)}.risk-médio{color:var(--amber)}.risk-baixo{color:var(--green)}
+    .empty{text-align:center;padding:3rem;color:var(--dim);font-size:12px}
+    .toast{position:fixed;bottom:20px;right:20px;background:var(--s1);border:1px solid var(--green);color:var(--green);font-size:11px;padding:8px 14px;opacity:0;transform:translateY(6px);transition:all .2s;pointer-events:none}
+    .toast.show{opacity:1;transform:translateY(0)}
+    .toast.err{border-color:var(--red);color:var(--red)}
+    @media(max-width:700px){.stats{grid-template-columns:1fr 1fr}.topbar-actions{width:100%}}
+  </style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="loginScreen">
+  <div class="login-box">
+    <div class="login-title">IP Tracker</div>
+    <div class="login-sub">admin panel · autenticação</div>
+    <input type="password" id="pwdInput" placeholder="senha" onkeydown="if(event.key==='Enter')doLogin()"/>
+    <button onclick="doLogin()">entrar</button>
+    <div class="login-err" id="loginErr">senha incorreta</div>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div id="mainScreen">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:14px">
+      <span class="logo">IP <span>Tracker</span></span>
+      <span class="live"><span class="dot"></span>ao vivo</span>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn" onclick="loadVisits()">↻ atualizar</button>
+      <button class="btn primary" onclick="copyLink()">copiar link</button>
+      <button class="btn danger" onclick="clearVisits()">limpar dados</button>
+    </div>
+  </div>
+
+  <div class="link-bar">
+    <span class="link-label">🔗 link de rastreio</span>
+    <span class="link-url" id="trackUrl">─</span>
+    <button class="btn primary" onclick="copyLink()">copiar</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-l">Registros</div><div class="stat-v g" id="sTotal">─</div></div>
+    <div class="stat"><div class="stat-l">IPs únicos</div><div class="stat-v b" id="sUniq">─</div></div>
+    <div class="stat"><div class="stat-l">VPN / Proxy</div><div class="stat-v a" id="sVpn">─</div></div>
+    <div class="stat"><div class="stat-l">Último acesso</div><div class="stat-v" id="sLast" style="font-size:11px;padding-top:4px">─</div></div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>#</th><th>ipv4</th><th>local</th><th>isp</th><th>browser · os</th><th>campanha</th><th>referer</th><th>data / hora</th><th>risco</th>
+      </tr></thead>
+      <tbody id="tbody"><tr><td colspan="9" class="empty">carregando...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const BASE  = location.origin;
+  const TRACK = BASE + '/track';
+  let   TOKEN = '';
+
+  document.getElementById('trackUrl').textContent = TRACK;
+
+  function toast(msg, err=false) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = 'toast' + (err?' err':'');
+    void t.offsetWidth; t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2600);
+  }
+
+  function fmt(iso) {
+    return new Date(iso).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }
+
+  function flag(code) {
+    if (!code||code.length!==2) return '';
+    const b=0x1F1E6;
+    return String.fromCodePoint(b+code.charCodeAt(0)-65)+String.fromCodePoint(b+code.charCodeAt(1)-65);
+  }
+
+  function risk(visit, all) {
+    let s=0;
+    if (visit.geo?.proxy)   s+=30;
+    if (visit.geo?.hosting) s+=20;
+    const h = all.filter(v=>v.ip===visit.ip).length;
+    if (h>=5) s+=20; else if(h>=3) s+=10;
+    const hr = new Date(visit.timestamp).getHours();
+    if (hr>=0&&hr<6) s+=10;
+    return s>=50?'alto':s>=20?'médio':'baixo';
+  }
+
+  async function doLogin() {
+    const pwd = document.getElementById('pwdInput').value;
+    const res = await fetch('/admin/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ password: pwd }) });
+    if (res.ok) {
+      TOKEN = pwd;
+      document.getElementById('loginScreen').style.display = 'none';
+      document.getElementById('mainScreen').style.display  = 'block';
+      loadVisits();
+    } else {
+      document.getElementById('loginErr').style.display = 'block';
+    }
+  }
+
+  // se não há senha configurada, pula login
+  (async () => {
+    const r = await fetch('/admin/visits', { headers:{'x-admin-token':''} });
+    if (r.ok) {
+      document.getElementById('loginScreen').style.display = 'none';
+      document.getElementById('mainScreen').style.display  = 'block';
+      loadVisits();
+    }
+  })();
+
+  async function loadVisits() {
+    const res    = await fetch('/admin/visits', { headers:{'x-admin-token':TOKEN} });
+    if (!res.ok) return;
+    const visits = await res.json();
+
+    document.getElementById('sTotal').textContent = visits.length;
+    document.getElementById('sUniq').textContent  = new Set(visits.map(v=>v.ip)).size;
+    document.getElementById('sVpn').textContent   = visits.filter(v=>v.geo?.proxy).length;
+    document.getElementById('sLast').textContent  = visits.length ? fmt(visits[visits.length-1].timestamp) : '─';
+
+    const tbody = document.getElementById('tbody');
+    if (!visits.length) { tbody.innerHTML='<tr><td colspan="9" class="empty">nenhum acesso registrado ainda.</td></tr>'; return; }
+
+    tbody.innerHTML = [...visits].reverse().map((v,i) => {
+      const g   = v.geo||{}, ua = v.parsedUA||{};
+      const loc = g.city ? `${flag(g.countryCode)} ${g.city}, ${g.countryCode}` : '─';
+      const vpn = g.proxy ? '<span class="vpn-tag">VPN</span>' : '';
+      const r   = risk(v, visits);
+      const camp = v.campaign && v.campaign!=='default' ? `<span class="camp">${v.campaign}</span>` : '<span class="t-dim">─</span>';
+      return `<tr>
+        <td class="t-dim">${visits.length-i}</td>
+        <td class="ip">${v.ip}${vpn}</td>
+        <td class="t-dim">${loc}</td>
+        <td class="t-dim" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${g.isp||'─'}</td>
+        <td class="t-dim">${ua.browser||'─'} · ${ua.os||'─'}</td>
+        <td>${camp}</td>
+        <td class="t-dim">${(v.referer||'Direto').slice(0,20)}</td>
+        <td class="t-dim">${fmt(v.timestamp)}</td>
+        <td class="risk-${r}">${r}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function copyLink() {
+    navigator.clipboard.writeText(TRACK).then(() => toast('✓ link copiado'));
+  }
+
+  async function clearVisits() {
+    if (!confirm('apagar todos os registros?')) return;
+    await fetch('/admin/visits', { method:'DELETE', headers:{'x-admin-token':TOKEN} });
+    toast('registros apagados', true);
+    loadVisits();
+  }
+
+  setInterval(loadVisits, 10000);
+</script>
+</body>
+</html>
