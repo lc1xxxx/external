@@ -123,6 +123,14 @@ app.post('/admin/login',           (req, res) => {
 });
 app.get('/admin/visits',           auth, (req, res) => res.json(db.getVisits()));
 app.delete('/admin/visits',        auth, (req, res) => { db.clearVisits(); res.json({ ok: true }); });
+app.delete('/admin/visits/ip/:ip',  auth, (req, res) => {
+  const ip      = decodeURIComponent(req.params.ip);
+  const visits  = db.getVisits().filter(v => v.ip !== ip);
+  const fs2     = require('fs');
+  const path2   = require('path');
+  fs2.writeFileSync(path2.join(__dirname, 'visits.json'), JSON.stringify(visits, null, 2));
+  res.json({ ok: true, removed: db.getVisits().length });
+});
 app.get('/admin/blacklist',        auth, (req, res) => res.json(db.getBlacklist()));
 app.post('/admin/blacklist',       auth, (req, res) => { db.blockIP(req.body.ip); res.json({ ok: true }); });
 app.delete('/admin/blacklist/:ip', auth, (req, res) => { db.unblockIP(req.params.ip); res.json({ ok: true }); });
