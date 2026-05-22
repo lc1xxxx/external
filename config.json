@@ -4,5 +4,11 @@
   "webhookUrl": "",
   "rateLimit": 10,
   "backupIntervalHours": 6,
-  "alertRepeatThreshold": 3
+  "alertRepeatThreshold": 3,
+  "telegramToken": "8727090929:AAE2ODRTAB7Wkxa1z0LGTnwRti5KR3UDJyk",
+  "telegramChatId": "7724741436",
+  "alertVpn": true,
+  "ignoredIPs": [
+    "177.152.61.106"
+  ]
 }

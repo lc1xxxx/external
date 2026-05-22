@@ -5,7 +5,7 @@ const crypto    = require('crypto');
 const path      = require('path');
 const chalk     = require('chalk');
 const db        = require('./db');
-const { toIPv4, geoIP, parseUA, riskScore, isSuspiciousHour, isRateLimited, countryFlag, sendTelegram, fmtDate, pad } = require('./utils');
+const { toIPv4, geoIP, parseUA, riskScore, isSuspiciousHour, isRateLimited, countryFlag, notifyAccess, notifyVPN, fmtDate, pad } = require('./utils');
 
 db.init();
 const app = express();
@@ -36,6 +36,10 @@ app.get('/track/:campaign?', async (req, res) => {
   const cfg      = db.getConfig();
 
   if (isRateLimited(ip, cfg.rateLimit || 10)) return res.status(429).send('Too many requests');
+
+  // ignorar IPs da lista negra do dono
+  const ignoredIPs = cfg.ignoredIPs || [];
+  if (ignoredIPs.includes(ip)) return res.redirect(cfg.defaultRedirect || '/');
   if (db.isBlocked(ip)) {
     process.stdout.write(ts() + '  ' + red('bloqueado') + '  ' + blue(ip) + '\n');
     return res.redirect(cfg.defaultRedirect || '/');
@@ -61,7 +65,8 @@ app.get('/track/:campaign?', async (req, res) => {
   );
 
   if (cfg.beepOnAccess) process.stdout.write('\x07');
-  sendTelegram(cfg.telegramToken, cfg.telegramChatId, visit, allVisits);
+  notifyAccess(cfg.telegramToken, cfg.telegramChatId, visit, allVisits);
+  if (geo && geo.proxy) notifyVPN(cfg.telegramToken, cfg.telegramChatId, visit);
 
   const hits = allVisits.filter(v => v.ip === ip).length;
   if (hits >= (cfg.alertRepeatThreshold || 3))
