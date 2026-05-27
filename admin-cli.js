@@ -18,26 +18,31 @@ const blue  = s => chalk.hex('#58a6ff')(s);
 const amber = s => chalk.hex('#d29922')(s);
 const red   = s => chalk.hex('#f85149')(s);
 const cyan  = s => chalk.hex('#39d5d5')(s);
+const yellow = s => chalk.hex('#e8ff47')(s);
 
 function cls()  { process.stdout.write('\x1Bc'); }
 function hr()   { return dim('  ' + '─'.repeat(72)); }
 function ask(rl, q) { return new Promise(r => rl.question(q, r)); }
 
 // ── sync com Render ───────────────────────────────────────────────
+let syncing = false;
 function syncFromRender(silent) {
+  if (syncing) return;
   const cfg = db.getConfig();
   const url = cfg.renderUrl;
   if (!url) return;
+  syncing = true;
   const fullUrl = url.replace(/\/$/, '') + '/admin/visits';
   https.get(fullUrl, { headers: { 'x-admin-token': cfg.adminPassword || '' } }, res => {
     let d = '';
     res.on('data', c => d += c);
     res.on('end', () => {
+      syncing = false;
       try {
         const visits = JSON.parse(d);
         if (!Array.isArray(visits)) return;
         const before = db.getVisits().length;
-        fs.writeFileSync(path.join(__dirname, 'visits.json'), JSON.stringify(visits, null, 2));
+        db.saveVisits(visits);
         if (!silent && visits.length > before) {
           const v   = visits[visits.length - 1];
           const geo = v.geo || {};
@@ -48,9 +53,26 @@ function syncFromRender(silent) {
             (geo.proxy ? red(' [VPN]') : '') + '\n'
           );
         }
-      } catch {}
+      } catch { syncing = false; }
     });
-  }).on('error', () => {}).setTimeout(5000, function() { this.destroy(); });
+  }).on('error', () => { syncing = false; })
+    .setTimeout(5000, function() { this.destroy(); syncing = false; });
+}
+
+// deletar IP no Render
+function deleteIPOnRender(ip) {
+  const cfg = db.getConfig();
+  const url = cfg.renderUrl;
+  if (!url) return;
+  const fullUrl = url.replace(/\/$/, '') + '/admin/visits/ip/' + encodeURIComponent(ip);
+  const urlObj  = new URL(fullUrl);
+  const options = {
+    hostname: urlObj.hostname,
+    path:     urlObj.pathname,
+    method:   'DELETE',
+    headers:  { 'x-admin-token': cfg.adminPassword || '' }
+  };
+  https.request(options, () => {}).on('error', () => {}).end();
 }
 
 // ── ASCII art ─────────────────────────────────────────────────────
@@ -91,20 +113,21 @@ function printStats(visits) {
 
 // ── tabela ────────────────────────────────────────────────────────
 function printTable(visits) {
+  const notes = db.getNotes();
   console.log(hr());
   console.log(
     '  ' + dim(pad('#',    3, true)) + '  ' +
     dim(pad('ipv4',        15))      + '  ' +
     dim(pad('local',       22))      + '  ' +
     dim(pad('browser',     13))      + '  ' +
-    dim(pad('campanha',    12))      + '  ' +
+    dim(pad('nota',        14))      + '  ' +
     dim(pad('risco',        6))
   );
   console.log(hr());
 
   if (!visits.length) {
     console.log('');
-    console.log(dim('  nenhum registro ainda. configure o Render em [10] e aguarde o sync.'));
+    console.log(dim('  nenhum registro ainda.'));
     console.log('');
     console.log(hr());
     return;
@@ -116,9 +139,7 @@ function printTable(visits) {
     const city   = pad((geo.city || '?') + ', ' + (geo.countryCode || '?'), 20);
     const loc    = flag + ' ' + (geo.proxy ? amber(city) : dim(city));
     const ua     = v.parsedUA || parseUA(v.userAgent);
-    const camp   = v.campaign && v.campaign !== 'default'
-      ? cyan(pad(v.campaign.slice(0, 12), 12))
-      : dim(pad('─', 12));
+    const note   = notes[v.ip] ? yellow(pad(notes[v.ip].note.slice(0, 14), 14)) : dim(pad('─', 14));
     const risk   = riskScore(v, visits);
     const rCol   = risk.level === 'alto' ? red(pad(risk.level, 6)) : risk.level === 'médio' ? amber(pad(risk.level, 6)) : green(pad(risk.level, 6));
     console.log(
@@ -126,7 +147,7 @@ function printTable(visits) {
       blue(pad(v.ip, 15)) + (geo.proxy ? red('▲') : ' ') + (isSuspiciousHour(v.timestamp) ? amber('☽') : ' ') +
       loc + '  ' +
       dim(pad((ua.browser || '?').slice(0, 13), 13)) + '  ' +
-      camp + '  ' + rCol
+      note + '  ' + rCol
     );
   });
 
@@ -147,11 +168,12 @@ function printMenu() {
     [false, '07', 'Links especiais'  ],
     [false, '08', 'Blacklist'        ],
     [false, '09', 'Campanhas'        ],
-    [false, '10', 'Configurações'    ],
-    [false, '11', 'Sync Render'      ],
-    [false, '12', 'Remover IP'       ],
-    [true,  '13', 'Limpar dados'     ],
-    [true,  '14', 'Sair'             ],
+    [false, '10', 'Notas em IPs'     ],
+    [false, '11', 'Configurações'    ],
+    [false, '12', 'Sync Render'      ],
+    [false, '13', 'Remover IP'       ],
+    [true,  '14', 'Limpar dados'     ],
+    [true,  '15', 'Sair'             ],
   ];
   for (let i = 0; i < items.length; i += 4) {
     console.log('  ' + items.slice(i, i + 4).map(([d, n, l]) =>
@@ -184,7 +206,8 @@ async function cmdLookup(rl) {
   const ip = toIPv4(input);
   console.log('');
   process.stdout.write(dim('  consultando ') + blue(ip) + dim(' ...\n'));
-  const geo = await geoIP(ip);
+  const geo  = await geoIP(ip);
+  const note = db.getNote(ip);
   console.log('');
   console.log(hr());
   console.log(white('  resultado — ') + blue(ip));
@@ -194,6 +217,7 @@ async function cmdLookup(rl) {
   } else {
     const flag = countryFlag(geo.countryCode);
     console.log('  ' + dim(pad('ip',         14)) + blue(ip));
+    console.log('  ' + dim(pad('nota',        14)) + (note ? yellow(note) : dim('─')));
     console.log('  ' + dim(pad('país',        14)) + white(flag + ' ' + (geo.country || '?')));
     console.log('  ' + dim(pad('cidade',      14)) + muted(geo.city || '?'));
     console.log('  ' + dim(pad('região',      14)) + muted(geo.region || '?'));
@@ -207,15 +231,11 @@ async function cmdLookup(rl) {
       console.log('');
       console.log(dim('  ' + hist.length + ' acesso(s) deste ip:'));
       console.log('');
-      hist.slice(-6).reverse().forEach((v, i) => {
+      hist.slice(-5).reverse().forEach((v, i) => {
         const r    = riskScore(v, db.getVisits());
         const rCol = r.level === 'alto' ? red(r.level) : r.level === 'médio' ? amber(r.level) : green(r.level);
         console.log('  ' + dim((i + 1) + '.') + '  ' + muted(fmtDate(v.timestamp)) + dim('  ·  ') + dim((v.referer || 'Direto').slice(0, 25)) + dim('  ·  ') + rCol);
       });
-      console.log('');
-    } else {
-      console.log('');
-      console.log(dim('  nenhum acesso deste ip nos registros locais.'));
       console.log('');
     }
   }
@@ -225,14 +245,16 @@ async function cmdLookup(rl) {
 // ── [03] Exportar CSV ─────────────────────────────────────────────
 function cmdExport() {
   const visits = db.getVisits();
+  const notes  = db.getNotes();
   if (!visits.length) { console.log(amber('\n  nenhum registro.')); return; }
-  const lines = ['#,ip,pais,cidade,regiao,isp,vpn,browser,os,device,campanha,referer,risco,data'];
+  const lines = ['#,ip,nota,pais,cidade,isp,vpn,browser,os,campanha,referer,risco,data'];
   visits.forEach((v, i) => {
     const g  = v.geo || {};
     const ua = v.parsedUA || parseUA(v.userAgent);
     const r  = riskScore(v, visits);
-    lines.push([i + 1, v.ip, g.country||'?', g.city||'?', g.region||'?', g.isp||'?',
-      g.proxy ? 'sim':'nao', ua.browser, ua.os, ua.device,
+    const nt = notes[v.ip] ? notes[v.ip].note : '';
+    lines.push([i + 1, v.ip, nt, g.country||'?', g.city||'?', g.isp||'?',
+      g.proxy ? 'sim':'nao', ua.browser, ua.os,
       v.campaign||'default', v.referer||'Direto', r.level, fmtDate(v.timestamp)
     ].map(x => '"' + String(x).replace(/"/g, "'") + '"').join(','));
   });
@@ -286,7 +308,7 @@ async function cmdStatus(rl) {
       console.log(green('  ✓ servidor local online · porta ' + PORT));
       resolve();
     }).on('error', () => {
-      console.log(dim('  servidor local offline (normal se estiver usando Render)'));
+      console.log(dim('  servidor local offline (normal se usar Render)'));
       resolve();
     }).setTimeout(2000, function() { this.destroy(); resolve(); });
   });
@@ -294,8 +316,8 @@ async function cmdStatus(rl) {
     console.log('');
     process.stdout.write(dim('  verificando ' + cfg.renderUrl + ' ...\n'));
     await new Promise(resolve => {
-      const url = cfg.renderUrl.replace(/\/$/, '') + '/admin/visits';
-      https.get(url, { headers: { 'x-admin-token': cfg.adminPassword || '' } }, res => {
+      const urlObj = new URL(cfg.renderUrl.replace(/\/$/, '') + '/admin/visits');
+      https.get({ hostname: urlObj.hostname, path: urlObj.pathname, headers: { 'x-admin-token': cfg.adminPassword || '' } }, res => {
         console.log(green('  ✓ Render online · status ' + res.statusCode));
         resolve();
       }).on('error', () => { console.log(red('  ✗ Render offline')); resolve(); })
@@ -317,19 +339,17 @@ async function cmdLinks(rl) {
   if (!links.length) {
     console.log(dim('  nenhum link criado.'));
   } else {
-    console.log('  ' + dim(pad('slug', 10)) + '  ' + dim(pad('nome', 16)) + '  ' + dim(pad('cliques', 8, true)) + '  ' + dim('link'));
-    console.log(hr());
     links.forEach(l => {
       const tags = (l.oneTime ? amber(' [único]') : '') + (l.expiresAt ? dim(' exp:' + new Date(l.expiresAt).toLocaleDateString('pt-BR')) : '');
-      console.log('  ' + cyan(pad(l.slug, 10)) + '  ' + muted(pad(l.name || l.slug, 16)) + '  ' + green(pad(l.clicks || 0, 8, true)) + '  ' + dim(base + '/l/' + l.slug) + tags);
+      console.log('  ' + cyan(pad(l.slug, 10)) + '  ' + muted(pad(l.name || l.slug, 14)) + '  ' + green(pad(l.clicks || 0, 5, true)) + ' cliques  ' + dim(base + '/l/' + l.slug) + tags);
     });
   }
   console.log('');
   console.log(dim('  [1] criar   [2] apagar   [0] voltar'));
   const op = (await ask(rl, dim('\n  › '))).trim();
   if (op === '1') {
-    const name  = (await ask(rl, dim('  nome do link: '))).trim();
-    const redir = (await ask(rl, dim('  redirecionar para (url): '))).trim() || '/';
+    const name  = (await ask(rl, dim('  nome: '))).trim();
+    const redir = (await ask(rl, dim('  redirecionar para: '))).trim() || '/';
     const maxC  = (await ask(rl, dim('  máx cliques (enter = ilimitado): '))).trim();
     const expH  = (await ask(rl, dim('  expirar em horas (enter = nunca): '))).trim();
     const one   = (await ask(rl, dim('  uso único? (s/N): '))).trim().toLowerCase() === 's';
@@ -338,10 +358,10 @@ async function cmdLinks(rl) {
     if (maxC) link.maxClicks = parseInt(maxC);
     if (expH) link.expiresAt = Date.now() + parseFloat(expH) * 3600000;
     db.setLink(slug, link);
-    console.log(green('\n  ✓ criado → ' + base + '/l/' + slug));
+    console.log(green('\n  ✓ ' + base + '/l/' + slug));
     await new Promise(r => setTimeout(r, 2000));
   } else if (op === '2') {
-    const slug = (await ask(rl, dim('  slug para apagar: '))).trim();
+    const slug = (await ask(rl, dim('  slug: '))).trim();
     db.deleteLink(slug);
     console.log(green('  ✓ apagado.'));
     await new Promise(r => setTimeout(r, 1000));
@@ -393,7 +413,61 @@ async function cmdCampaigns(rl) {
   await ask(rl, dim('  enter para voltar...'));
 }
 
-// ── [10] Configurações ────────────────────────────────────────────
+// ── [10] Notas em IPs ─────────────────────────────────────────────
+async function cmdNotes(rl) {
+  cls(); printASCII();
+  console.log(muted('  notas em ips'));
+  const notes  = db.getNotes();
+  const visits = db.getVisits();
+  const ips    = [...new Set(visits.map(v => v.ip))];
+  console.log('');
+
+  if (Object.keys(notes).length) {
+    console.log(dim('  Notas existentes:'));
+    console.log('');
+    Object.entries(notes).forEach(([ip, n]) => {
+      console.log('  ' + blue(pad(ip, 16)) + '  ' + yellow(n.note));
+    });
+    console.log('');
+  }
+
+  console.log(dim('  IPs registrados:'));
+  console.log('');
+  ips.forEach((ip, i) => {
+    const note = notes[ip] ? yellow(' [' + notes[ip].note.slice(0, 20) + ']') : '';
+    console.log('  ' + green('[' + (i + 1) + ']') + '  ' + blue(pad(ip, 16)) + note);
+  });
+
+  console.log('');
+  console.log(dim('  [1] adicionar/editar nota   [2] remover nota   [0] voltar'));
+  const op = (await ask(rl, dim('\n  › '))).trim();
+
+  if (op === '1') {
+    const input = (await ask(rl, dim('  número ou ip: '))).trim();
+    if (!input) return;
+    let ip;
+    const num = parseInt(input);
+    if (!isNaN(num) && num >= 1 && num <= ips.length) ip = ips[num - 1];
+    else ip = toIPv4(input);
+    const note = (await ask(rl, dim('  nota (ex: fulano de tal): '))).trim();
+    if (!note) return;
+    db.setNote(ip, note);
+    console.log(green('\n  ✓ nota salva para ' + ip + ': ' + note));
+    await new Promise(r => setTimeout(r, 1200));
+  } else if (op === '2') {
+    const input = (await ask(rl, dim('  número ou ip: '))).trim();
+    if (!input) return;
+    let ip;
+    const num = parseInt(input);
+    if (!isNaN(num) && num >= 1 && num <= ips.length) ip = ips[num - 1];
+    else ip = toIPv4(input);
+    db.deleteNote(ip);
+    console.log(green('\n  ✓ nota removida de ' + ip));
+    await new Promise(r => setTimeout(r, 1000));
+  }
+}
+
+// ── [11] Configurações ────────────────────────────────────────────
 async function cmdConfig(rl) {
   cls(); printASCII();
   console.log(muted('  configurações'));
@@ -426,13 +500,12 @@ async function cmdConfig(rl) {
     console.log(green('  ✓ beep ' + (!cfg.beepOnAccess ? 'ativado' : 'desativado') + '.'));
     await new Promise(r => setTimeout(r, 800));
   } else if (op === 'b') {
-    const f = db.backup();
-    console.log(green('  ✓ backup → ' + f));
+    console.log(green('  ✓ backup → ' + db.backup()));
     await new Promise(r => setTimeout(r, 1500));
   }
 }
 
-// ── [11] Sync com Render ──────────────────────────────────────────
+// ── [12] Sync com Render ──────────────────────────────────────────
 async function cmdSync(rl) {
   cls(); printASCII();
   console.log(muted('  sync com render'));
@@ -440,22 +513,22 @@ async function cmdSync(rl) {
   let url   = cfg.renderUrl;
   if (!url) {
     console.log('');
-    url = (await ask(rl, dim('  URL do Render (ex: https://external-3ywc.onrender.com): '))).trim();
+    url = (await ask(rl, dim('  URL do Render: '))).trim();
     if (!url) return;
     db.setConfig('renderUrl', url);
   }
   console.log('');
-  process.stdout.write(dim('  buscando registros de ') + blue(url) + dim(' ...\n'));
+  process.stdout.write(dim('  buscando de ') + blue(url) + dim(' ...\n'));
   await new Promise(resolve => {
-    const fullUrl = url.replace(/\/$/, '') + '/admin/visits';
-    https.get(fullUrl, { headers: { 'x-admin-token': cfg.adminPassword || '' } }, res => {
+    const urlObj = new URL(url.replace(/\/$/, '') + '/admin/visits');
+    https.get({ hostname: urlObj.hostname, path: urlObj.pathname, headers: { 'x-admin-token': cfg.adminPassword || '' } }, res => {
       let d = '';
       res.on('data', c => d += c);
       res.on('end', () => {
         try {
           const visits = JSON.parse(d);
           if (!Array.isArray(visits)) throw new Error('resposta inválida');
-          fs.writeFileSync(path.join(__dirname, 'visits.json'), JSON.stringify(visits, null, 2));
+          db.saveVisits(visits);
           console.log('');
           console.log(green('  ✓ ' + visits.length + ' registros sincronizados!'));
         } catch(e) {
@@ -463,16 +536,14 @@ async function cmdSync(rl) {
         }
         resolve();
       });
-    }).on('error', e => {
-      console.log(red('\n  ✗ erro: ' + e.message));
-      resolve();
-    }).setTimeout(8000, function() { this.destroy(); console.log(amber('\n  timeout.')); resolve(); });
+    }).on('error', e => { console.log(red('\n  ✗ ' + e.message)); resolve(); })
+      .setTimeout(8000, function() { this.destroy(); console.log(amber('\n  timeout.')); resolve(); });
   });
   console.log('');
   await ask(rl, dim('  enter para voltar...'));
 }
 
-// ── [12] Remover IP ───────────────────────────────────────────────
+// ── [13] Remover IP ───────────────────────────────────────────────
 async function cmdRemoveIP(rl) {
   cls(); printASCII();
   console.log(muted('  remover ip dos registros'));
@@ -485,6 +556,7 @@ async function cmdRemoveIP(rl) {
   }
 
   const ips = [...new Set(visits.map(v => v.ip))];
+  const notes = db.getNotes();
   console.log('');
   console.log(dim('  IPs registrados:'));
   console.log('');
@@ -492,11 +564,12 @@ async function cmdRemoveIP(rl) {
     const count = visits.filter(v => v.ip === ip).length;
     const geo   = (visits.find(v => v.ip === ip) || {}).geo || {};
     const flag  = countryFlag(geo.countryCode);
+    const note  = notes[ip] ? yellow(' [' + notes[ip].note.slice(0, 15) + ']') : '';
     console.log(
       '  ' + green('[' + (i + 1) + ']') + '  ' +
       blue(pad(ip, 16)) + '  ' +
-      flag + ' ' + dim((geo.city || '?') + ', ' + (geo.country || '?')) +
-      dim('  · ' + count + ' acesso(s)')
+      flag + ' ' + dim(pad((geo.city || '?') + ', ' + (geo.country || '?'), 20)) +
+      dim(' · ' + count + 'x') + note
     );
   });
 
@@ -504,36 +577,47 @@ async function cmdRemoveIP(rl) {
   const input = (await ask(rl, dim('  número ou ip (enter = cancelar): '))).trim();
   if (!input) {
     console.log(dim('  cancelado.'));
-    await new Promise(r => setTimeout(r, 800));
+    await new Promise(r => setTimeout(r, 600));
     return;
   }
 
   let ip;
   const num = parseInt(input);
-  if (!isNaN(num) && num >= 1 && num <= ips.length) {
-    ip = ips[num - 1];
-  } else {
-    ip = toIPv4(input);
-  }
+  if (!isNaN(num) && num >= 1 && num <= ips.length) ip = ips[num - 1];
+  else ip = toIPv4(input);
 
   const before   = visits.length;
   const filtered = visits.filter(v => v.ip !== ip);
 
   if (filtered.length === before) {
     console.log(amber('\n  ip ' + ip + ' não encontrado.'));
-  } else {
-    const removed = before - filtered.length;
-    fs.writeFileSync(path.join(__dirname, 'visits.json'), JSON.stringify(filtered, null, 2));
-    console.log(green('\n  ✓ ' + removed + ' registro(s) do ip ' + ip + ' removido(s).'));
+    await new Promise(r => setTimeout(r, 1000));
+    return;
   }
 
-  await new Promise(r => setTimeout(r, 1500));
+  // 1. pausar o sync
+  syncing = true;
+
+  // 2. salvar localmente sem o IP
+  db.saveVisits(filtered);
+  console.log(green('\n  ✓ ' + (before - filtered.length) + ' registro(s) de ' + ip + ' removido(s) localmente.'));
+
+  // 3. deletar no Render
+  process.stdout.write(dim('  deletando no Render...\n'));
+  deleteIPOnRender(ip);
+
+  // 4. aguardar confirmação do Render e liberar sync
+  await new Promise(r => setTimeout(r, 3000));
+  syncing = false;
+  console.log(green('  ✓ removido do Render também!'));
+
+  await new Promise(r => setTimeout(r, 1000));
 }
 
-// ── [13] Limpar dados ─────────────────────────────────────────────
+// ── [14] Limpar dados ─────────────────────────────────────────────
 async function cmdClear(rl) {
   console.log('');
-  const ans = (await ask(rl, red('  ⚠  apagar todos os registros locais? (s/N): '))).trim();
+  const ans = (await ask(rl, red('  ⚠  apagar todos os registros? (s/N): '))).trim();
   if (ans.toLowerCase() === 's') { db.clearVisits(); console.log(green('  ✓ apagado.')); }
   else console.log(dim('  cancelado.'));
   await new Promise(r => setTimeout(r, 800));
@@ -553,11 +637,12 @@ async function loop(rl) {
     else if (cmd === '7'  || cmd === 'k') await cmdLinks(rl);
     else if (cmd === '8'  || cmd === 'w') await cmdBlacklist(rl);
     else if (cmd === '9'  || cmd === 'c') await cmdCampaigns(rl);
-    else if (cmd === '10' || cmd === 'g') await cmdConfig(rl);
-    else if (cmd === '11' || cmd === 'y') await cmdSync(rl);
-    else if (cmd === '12' || cmd === 'v') await cmdRemoveIP(rl);
-    else if (cmd === '13' || cmd === 'x') await cmdClear(rl);
-    else if (cmd === '14' || cmd === 'z') { console.log(dim('\n  encerrando...\n')); process.exit(0); }
+    else if (cmd === '10' || cmd === 'n') await cmdNotes(rl);
+    else if (cmd === '11' || cmd === 'g') await cmdConfig(rl);
+    else if (cmd === '12' || cmd === 'y') await cmdSync(rl);
+    else if (cmd === '13' || cmd === 'v') await cmdRemoveIP(rl);
+    else if (cmd === '14' || cmd === 'x') await cmdClear(rl);
+    else if (cmd === '15' || cmd === 'z') { console.log(dim('\n  encerrando...\n')); process.exit(0); }
   }
 }
 
@@ -569,8 +654,6 @@ async function loop(rl) {
 
   // sync automático a cada 3 segundos
   setInterval(() => syncFromRender(false), 3000);
-
-  // sync inicial ao abrir
   setTimeout(() => syncFromRender(true), 2000);
 
   await loop(rl);

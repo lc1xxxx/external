@@ -25,10 +25,9 @@ const ts    = () => dim('[' + new Date().toLocaleTimeString('pt-BR') + ']');
 
 // ── /track ────────────────────────────────────────────────────────
 app.get('/track/:campaign?', async (req, res) => {
-  // ignorar bots de monitoramento — não registra no visits.json
-  const ua   = (req.headers['user-agent'] || '').toLowerCase();
-  const bots = ['uptimerobot', 'pingdom', 'statuscake', 'freshping', 'hetrixtools', 'googlebot', 'bingbot', 'crawler', 'spider', 'bot/'];
-  if (bots.some(b => ua.includes(b))) return res.redirect('/');
+  const ua2  = (req.headers['user-agent'] || '').toLowerCase();
+  const bots = ['uptimerobot','pingdom','statuscake','freshping','googlebot','bingbot','crawler','spider','bot/'];
+  if (bots.some(b => ua2.includes(b))) return res.redirect('/');
 
   const rawIP    = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || '0.0.0.0';
   const ip       = toIPv4(rawIP);
@@ -37,9 +36,9 @@ app.get('/track/:campaign?', async (req, res) => {
 
   if (isRateLimited(ip, cfg.rateLimit || 10)) return res.status(429).send('Too many requests');
 
-  // ignorar IPs da lista negra do dono
   const ignoredIPs = cfg.ignoredIPs || [];
   if (ignoredIPs.includes(ip)) return res.redirect(cfg.defaultRedirect || '/');
+
   if (db.isBlocked(ip)) {
     process.stdout.write(ts() + '  ' + red('bloqueado') + '  ' + blue(ip) + '\n');
     return res.redirect(cfg.defaultRedirect || '/');
@@ -54,11 +53,10 @@ app.get('/track/:campaign?', async (req, res) => {
 
   db.addVisit(visit);
   const allVisits = db.getVisits();
-  const risk      = riskScore(visit, allVisits);
-  const loc       = geo ? `${countryFlag(geo.countryCode)} ${geo.city||'?'}, ${geo.country||'?'}` : '?';
+  const loc       = geo ? countryFlag(geo.countryCode) + ' ' + (geo.city||'?') + ', ' + (geo.country||'?') : '?';
 
   process.stdout.write(
-    ts() + '  ' + green('acesso') + '  ' + blue(pad(ip, 15)) + '  ' + dim(pad(loc, 24)) +
+    ts() + '  ' + green('acesso') + '  ' + blue(pad(ip,15)) + '  ' + dim(pad(loc,24)) +
     (geo?.proxy ? red(' [VPN]') : '') +
     (isSuspiciousHour(timestamp) ? amber(' [SUSPEITO]') : '') +
     '  ' + dim(parsedUA.browser) + '\n'
@@ -70,30 +68,27 @@ app.get('/track/:campaign?', async (req, res) => {
 
   const hits = allVisits.filter(v => v.ip === ip).length;
   if (hits >= (cfg.alertRepeatThreshold || 3))
-    process.stdout.write(ts() + '  ' + amber(`⚠  ip ${ip} acessou ${hits}x`) + '\n');
+    process.stdout.write(ts() + '  ' + amber('⚠  ip ' + ip + ' acessou ' + hits + 'x') + '\n');
 
   res.redirect(cfg.defaultRedirect || '/');
 });
 
-// ── /l/:slug — links com expiração / uso único ────────────────────
+// ── /l/:slug ──────────────────────────────────────────────────────
 app.get('/l/:slug', async (req, res) => {
   const link = db.getLink(req.params.slug);
   if (!link) return res.status(404).send('Link não encontrado.');
   const now = Date.now();
   if (link.expiresAt && now > link.expiresAt) { db.deleteLink(req.params.slug); return res.status(410).send('Link expirado.'); }
   if (link.maxClicks && link.clicks >= link.maxClicks) { db.deleteLink(req.params.slug); return res.status(410).send('Link expirado.'); }
-
   link.clicks = (link.clicks || 0) + 1;
   db.setLink(req.params.slug, link);
-
   const ip       = toIPv4(req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || '0.0.0.0');
   const geo      = await geoIP(ip);
   const parsedUA = parseUA(req.headers['user-agent'] || '');
-  const visit    = { ip, userAgent: req.headers['user-agent']||'', parsedUA, referer: req.headers['referer']||'Direto', timestamp: new Date().toISOString(), campaign: `link:${req.params.slug}`, geo };
-
+  const visit    = { ip, userAgent: req.headers['user-agent']||'', parsedUA, referer: req.headers['referer']||'Direto', timestamp: new Date().toISOString(), campaign: 'link:' + req.params.slug, geo };
   db.addVisit(visit);
   const cfg = db.getConfig();
-  sendTelegram(cfg.telegramToken, cfg.telegramChatId, visit, db.getVisits());
+  notifyAccess(cfg.telegramToken, cfg.telegramChatId, visit, db.getVisits());
   if (link.oneTime) db.deleteLink(req.params.slug);
   res.redirect(link.redirect || cfg.defaultRedirect || '/');
 });
@@ -108,7 +103,7 @@ app.get('/pixel.gif', async (req, res) => {
   res.end(gif);
 });
 
-// ── admin auth ────────────────────────────────────────────────────
+// ── auth ──────────────────────────────────────────────────────────
 function auth(req, res, next) {
   const pwd = db.getConfig().adminPassword;
   if (!pwd) return next();
@@ -116,6 +111,7 @@ function auth(req, res, next) {
   res.status(401).json({ error: 'Não autorizado' });
 }
 
+// ── admin API ─────────────────────────────────────────────────────
 app.post('/admin/login',           (req, res) => {
   const pwd = db.getConfig().adminPassword;
   if (!pwd || req.body.password === pwd) return res.json({ ok: true });
@@ -123,14 +119,17 @@ app.post('/admin/login',           (req, res) => {
 });
 app.get('/admin/visits',           auth, (req, res) => res.json(db.getVisits()));
 app.delete('/admin/visits',        auth, (req, res) => { db.clearVisits(); res.json({ ok: true }); });
-app.delete('/admin/visits/ip/:ip',  auth, (req, res) => {
+
+// ── deletar IP específico ─────────────────────────────────────────
+app.delete('/admin/visits/ip/:ip', auth, (req, res) => {
   const ip      = decodeURIComponent(req.params.ip);
-  const visits  = db.getVisits().filter(v => v.ip !== ip);
-  const fs2     = require('fs');
-  const path2   = require('path');
-  fs2.writeFileSync(path2.join(__dirname, 'visits.json'), JSON.stringify(visits, null, 2));
-  res.json({ ok: true, removed: db.getVisits().length });
+  const before  = db.getVisits();
+  const filtered = before.filter(v => v.ip !== ip);
+  db.saveVisits(filtered);
+  process.stdout.write(ts() + '  ' + amber('ip ' + ip + ' removido (' + (before.length - filtered.length) + ' registros)') + '\n');
+  res.json({ ok: true, removed: before.length - filtered.length });
 });
+
 app.get('/admin/blacklist',        auth, (req, res) => res.json(db.getBlacklist()));
 app.post('/admin/blacklist',       auth, (req, res) => { db.blockIP(req.body.ip); res.json({ ok: true }); });
 app.delete('/admin/blacklist/:ip', auth, (req, res) => { db.unblockIP(req.params.ip); res.json({ ok: true }); });
@@ -145,10 +144,66 @@ app.post('/admin/links',           auth, (req, res) => {
   if (maxClicks)      link.maxClicks = parseInt(maxClicks);
   if (expiresInHours) link.expiresAt = Date.now() + expiresInHours * 3600000;
   db.setLink(slug, link);
-  res.json({ ok: true, slug, url: `/l/${slug}` });
+  res.json({ ok: true, slug, url: '/l/' + slug });
 });
 app.delete('/admin/links/:slug',   auth, (req, res) => { db.deleteLink(req.params.slug); res.json({ ok: true }); });
 
+// ── notas por IP ──────────────────────────────────────────────────
+app.get('/admin/notes',            auth, (req, res) => res.json(db.getNotes()));
+app.post('/admin/notes',           auth, (req, res) => {
+  const { ip, note } = req.body;
+  if (!ip) return res.status(400).json({ error: 'ip obrigatorio' });
+  db.setNote(ip, note);
+  res.json({ ok: true });
+});
+app.delete('/admin/notes/:ip',     auth, (req, res) => {
+  db.deleteNote(decodeURIComponent(req.params.ip));
+  res.json({ ok: true });
+});
+
+// ── webhook Telegram ──────────────────────────────────────────────
+app.post('/telegram-webhook', (req, res) => {
+  res.json({ ok: true });
+  try {
+    const cfg2   = db.getConfig();
+    const msg    = req.body && req.body.message;
+    if (!msg) return;
+    const chatId = String(msg.chat && msg.chat.id);
+    const text   = (msg.text || '').trim().toLowerCase();
+    if (chatId !== String(cfg2.telegramChatId)) return;
+    const fetch2 = require('node-fetch');
+    const token  = cfg2.telegramToken;
+    if (!token) return;
+    function reply(txt) {
+      fetch2('https://api.telegram.org/bot' + token + '/sendMessage', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ chat_id: chatId, text: txt, parse_mode:'Markdown' })
+      });
+    }
+    const visits = db.getVisits();
+    const notes  = db.getNotes();
+    if (text === '/visitas' || text === '/start') {
+      if (!visits.length) return reply('Nenhum acesso ainda.');
+      const last5 = visits.slice(-5).reverse();
+      const lines = ['📡 *Últimos 5 acessos:*', ''];
+      last5.forEach((v, i) => {
+        const geo = v.geo || {};
+        const nt  = notes[v.ip] ? '\n   📝 ' + notes[v.ip].note : '';
+        lines.push((i+1) + '. `' + v.ip + '`\n   📍 ' + (geo.city||'?') + ', ' + (geo.country||'?') + '\n   🔒 VPN: ' + (geo.proxy ? '⚠️ Sim':'✅ Não') + '\n   ⏰ ' + new Date(v.timestamp).toLocaleString('pt-BR') + nt);
+      });
+      lines.push('\n📊 Total: ' + visits.length + ' | Únicos: ' + new Set(visits.map(v => v.ip)).size);
+      reply(lines.join('\n'));
+    } else if (text === '/total') {
+      reply('📊 *Estatísticas*\n\nTotal: ' + visits.length + '\nIPs únicos: ' + new Set(visits.map(v => v.ip)).size + '\nVPNs: ' + visits.filter(v => v.geo && v.geo.proxy).length);
+    } else if (text === '/ajuda' || text === '/help') {
+      reply('📋 *Comandos:*\n\n/visitas — últimos 5 acessos\n/total — estatísticas\n/ajuda — esta mensagem');
+    } else {
+      reply('❓ Comando não reconhecido. Use /ajuda.');
+    }
+  } catch(e) {}
+});
+
+// ── start ─────────────────────────────────────────────────────────
 const cfg  = db.getConfig();
 const PORT = process.env.PORT || cfg.port || 3000;
 db.startAutoBackup(cfg.backupIntervalHours || 6);
@@ -157,11 +212,10 @@ app.listen(PORT, () => {
   console.log('');
   process.stdout.write('  ' + white('IP ') + green('Tracker') + dim('  v3.0.0\n'));
   console.log(dim('  ─'.repeat(34)));
-  console.log(dim('  servidor  ') + green(`http://localhost:${PORT}`));
-  console.log(dim('  rastreio  ') + blue(`http://localhost:${PORT}/track`));
-  console.log(dim('  campanha  ') + blue(`http://localhost:${PORT}/track/<nome>`));
-  console.log(dim('  pixel     ') + blue(`http://localhost:${PORT}/pixel.gif`));
-  console.log(dim('  admin     ') + dim(`http://localhost:${PORT}/admin.html`));
+  console.log(dim('  servidor  ') + green('http://localhost:' + PORT));
+  console.log(dim('  rastreio  ') + blue('http://localhost:' + PORT + '/track'));
+  console.log(dim('  pixel     ') + blue('http://localhost:' + PORT + '/pixel.gif'));
+  console.log(dim('  admin     ') + dim('http://localhost:' + PORT + '/admin.html'));
   console.log(dim('  ─'.repeat(34)));
   console.log('');
 });
