@@ -6,9 +6,10 @@
   "backupIntervalHours": 6,
   "alertRepeatThreshold": 3,
   "telegramToken": "8727090929:AAE2ODRTAB7Wkxa1z0LGTnwRti5KR3UDJyk",
-  "telegramChatId": "7724741436",
+  "telegramChatId": -1003846815744,
   "alertVpn": true,
   "ignoredIPs": [
     "177.152.61.106"
-  ]
+  ],
+  "renderUrl": "https://external-3ywc.onrender.com"
 }
